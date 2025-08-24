@@ -1,6 +1,7 @@
 import logging
 import random
-from telegram import Update, ChatMember, InputFile
+import os
+from telegram import Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -8,10 +9,8 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# --- CONFIG ---
-BOT_TOKEN = "8142929033:AAEI-63s7Sp-a93GgeQppUGuTzsPUHqRVcE"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 IMAGE_PATH = "couple.jpg"  # default image
 members = set()
 
@@ -31,7 +30,8 @@ async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admins can set couple image by replying with a photo."""
     global IMAGE_PATH
-    if update.message.from_user.id not in [admin.user.id for admin in (await update.effective_chat.get_administrators())]:
+    admins = [admin.user.id for admin in await update.effective_chat.get_administrators()]
+    if update.message.from_user.id not in admins:
         await update.message.reply_text("Only admins can change the image!")
         return
     if update.message.reply_to_message and update.message.reply_to_message.photo:
@@ -46,37 +46,34 @@ async def choose_couple(context: ContextTypes.DEFAULT_TYPE):
     if len(members) < 2:
         return
     couple = random.sample(list(members), 2)
-    chat_id = context.job.chat_id if hasattr(context.job, "chat_id") else None
-    if chat_id:
-        # fancy big stylish font (Unicode)
-        message = f"💞 𝓑𝓮𝓼𝓽 𝓒𝓸𝓾𝓹𝓵𝓮 𝓸𝓯 𝓽𝓱𝓮 𝓱𝓸𝓾𝓻 💞\n\n" \
-                  f"❤️ <a href='tg://user?id={couple[0]}'>User 1</a> + <a href='tg://user?id={couple[1]}'>User 2</a> ❤️"
+    chat_id = context.job.chat_id
 
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=InputFile(IMAGE_PATH),
-            caption=message,
-            parse_mode="HTML"
-        )
+    message = (
+        f"💞 𝓑𝓮𝓼𝓽 𝓒𝓸𝓾𝓹𝓵𝓮 𝓸𝓯 𝓽𝓱𝓮 𝓱𝓸𝓾𝓻 💞\n\n"
+        f"❤️ <a href='tg://user?id={couple[0]}'>User 1</a> + <a href='tg://user?id={couple[1]}'>User 2</a> ❤️"
+    )
+
+    await context.bot.send_photo(
+        chat_id=chat_id,
+        photo=InputFile(IMAGE_PATH),
+        caption=message,
+        parse_mode="HTML"
+    )
 
 async def set_hourly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start hourly job in current chat."""
-    scheduler = context.application.job_queue.scheduler
-    scheduler.add_job(
+    chat_id = update.effective_chat.id
+    context.job_queue.run_repeating(
         choose_couple,
-        "interval",
-        hours=1,
-        args=[context],
-        kwargs={"chat_id": update.effective_chat.id},
-        replace_existing=True,
-        id=f"couple_{update.effective_chat.id}",
+        interval=3600,  # every hour
+        first=10,       # first run after 10 sec
+        chat_id=chat_id,
+        name=f"couple_{chat_id}"
     )
     await update.message.reply_text("✅ Hourly couple selection started!")
 
 # --- MAIN ---
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-scheduler = AsyncIOScheduler()
-scheduler.start()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("sethourly", set_hourly))
